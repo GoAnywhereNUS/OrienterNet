@@ -10,13 +10,14 @@ import urllib3
 from .. import logger
 from ..utils.geo import BoundaryBox
 
-OSM_URL = "https://api.openstreetmap.org/api/0.6/map.json"
+OSM_URL = "https://api.openstreetmap.org/api/0.6/map.xml"
 
 
 def get_osm(
     boundary_box: BoundaryBox,
     cache_path: Optional[Path] = None,
     overwrite: bool = False,
+    write_json: bool = True
 ) -> Dict[str, Any]:
     if not overwrite and cache_path is not None and cache_path.is_file():
         return json.loads(cache_path.read_text())
@@ -32,4 +33,8 @@ def get_osm(
 
     if cache_path is not None:
         cache_path.write_bytes(result.data)
+
+    if not write_json:
+        return result.data
+
     return result.json()

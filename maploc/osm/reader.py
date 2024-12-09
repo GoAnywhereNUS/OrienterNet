@@ -172,11 +172,11 @@ class OSMData:
     The whole OpenStreetMap information about nodes, ways, and relations.
     """
 
-    def __init__(self) -> None:
-        self.nodes: Dict[int, OSMNode] = {}
-        self.ways: Dict[int, OSMWay] = {}
-        self.relations: Dict[int, OSMRelation] = {}
-        self.box: BoundaryBox = None
+    def __init__(self, nodes=None, ways=None, relations=None, box=None) -> None:
+        self.nodes: Dict[int, OSMNode] = {} if nodes is None else nodes
+        self.ways: Dict[int, OSMWay] = {} if ways is None else ways
+        self.relations: Dict[int, OSMRelation] = {} if relations is None else relations
+        self.box: BoundaryBox = None if box is None else box
 
     @classmethod
     def from_dict(cls, structure: Dict[str, Any]):

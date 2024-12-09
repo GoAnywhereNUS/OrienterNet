@@ -8,13 +8,14 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import rtree
 from PIL import Image
+import osmium
 
 from ..utils.geo import BoundaryBox, Projection
 from .data import MapData
 from .download import get_osm
 from .parser import Groups
 from .raster import Canvas, render_raster_map, render_raster_masks
-from .reader import OSMData, OSMNode, OSMWay
+from .reader import OSMData, OSMNode, OSMWay, OSMRelation, OSMMember
 
 
 class MapIndex:
@@ -61,6 +62,77 @@ def round_bbox(bbox: BoundaryBox, origin: np.ndarray, ppm: int):
     return bbox.translate(origin)
 
 
+class OsmiumDataStore:
+    def __init__(self, projection, bbox):
+        self.projection = projection
+        self.bbox_osm = projection.unproject(bbox)
+        resp = get_osm(self.bbox_osm, write_json=False)
+        self.data = osmium.io.FileBuffer(resp, 'osm.xml')
+
+        self.nodes = dict()
+        self.ways = dict()
+        self.relations = dict()
+
+        for o in osmium.FileProcessor(self.data):
+            if o.is_node():
+                self.nodes[int(o.id)] = OSMNode(
+                    int(o.id), dict(o.tags), geo=np.array([float(o.lat), float(o.lon)])
+                )
+            elif o.is_way():
+                self.ways[o.id] = OSMWay(
+                    int(o.id),
+                    dict(o.tags),
+                    [self.nodes[x.ref] for x in o.nodes]
+                )
+            elif o.is_relation():
+                self.relations[o.id] = OSMRelation(
+                    int(o.id), dict(o.tags), [OSMMember(x.type, x.ref, x.role) for x in o.members]
+                )
+        self.add_xy_to_nodes()
+
+    def from_bbox(self, bbox):
+        bbox_osm = self.projection.unproject(bbox)
+        (min_lon, min_lat), (max_lon, max_lat) = bbox_osm.min_, bbox_osm.max_
+
+        def is_within_bbox(lon, lat):
+            return min_lon <= lon <= max_lon and min_lat <= lat <= max_lat
+
+        nodes = {}
+        ways = {}
+        relations = {}
+
+        for k, v in self.nodes.items():
+            if is_within_bbox(*v.geo):
+                nodes[k] = v
+        for k, v in self.ways.items():
+            if any(is_within_bbox(*n.geo) for n in v.nodes):
+                ways[k] = v
+        for k, v in self.relations.items():
+            for member in v.members:
+                if member.type_ == 'node':
+                    if is_within_bbox(*(nodes[member.ref].geo)):
+                        relations[k] = v
+
+        return OSMData(nodes, ways, relations, bbox)
+    
+    def add_xy_to_nodes(self):
+        nodes = list(self.nodes.values())
+        if len(nodes) == 0:
+            return
+        geos = np.stack([n.geo for n in nodes], 0)
+        if self.projection.bounds is not None:
+            # For some reasons few nodes are sometimes very far off the initial bbox.
+            valid = self.projection.bounds.contains(geos)
+            if valid.mean() < 0.9:
+                print("Many nodes are out of the projection bounds.")
+            xys = np.zeros_like(geos)
+            xys[valid] = self.projection.project(geos[valid])
+        else:
+            xys = self.projection.project(geos)
+        for xy, node in zip(xys, nodes):
+            node.xy = xy
+
+
 class TileManager:
     def __init__(
         self,
@@ -92,6 +164,7 @@ class TileManager:
         ppm: int,
         path: Optional[Path] = None,
         tile_size: int = 128,
+        datastore: Optional[OsmiumDataStore] = None,
     ):
         bbox_osm = projection.unproject(bbox)
         if path is not None and path.is_file():
@@ -99,7 +172,10 @@ class TileManager:
             if osm.box is not None:
                 assert osm.box.contains(bbox_osm)
         else:
-            osm = OSMData.from_dict(get_osm(bbox_osm, path))
+            if datastore is not None:
+                osm = datastore.from_bbox(bbox)
+            else:
+                osm = OSMData.from_dict(get_osm(bbox_osm, path))
 
         osm.add_xy_to_nodes(projection)
         map_data = MapData.from_osm(osm)
