@@ -20,7 +20,7 @@ demo = Demo(num_rotations=72, device="cuda")
 # prior_address = "3 Research Link Singapore"
 
 # Try out these other queries!
-image_path = "assets/query_vancouver_1.jpeg"
+image_path = "assets/query_vancouver_1.JPG"
 prior_address = "Vancouver Waterfront Station"
 
 # image_path = "assets/query_vancouver_2.JPG"
